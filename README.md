@@ -19,3 +19,6 @@ Files are:
 
 The files are quite short and should be self-explanatory
 
+If you use this please cite  
+https://zenodo.org/badge/158817258.svg
+
