@@ -1,0 +1,121 @@
+/* definition of the class and utility functions for asymmetric errors*/
+/* These are (hopefully) in vanilla C++ */
+
+class asyms{
+public: float x0,sigma,sigmap; // sigmap is sigma-prime, the differential
+ asyms(float val, float sp, float sm){
+   x0=val;
+   sigma=2 *sp * sm / (sp+sm);
+   sigmap= (sp-sm)/(sp+sm);
+}
+float eval(float x){ return(-0.5*pow((x-x0)/(sigma+sigmap*(x-x0)),2)); }
+float diff(float x){ return(2*sigma*(x-x0)/pow(sigma+sigmap*(x-x0),3)); }
+};
+
+float combs(float x, int N, asyms** a){ // combine assuming linear sigma
+   float ans=0;
+   for(int i=0;i<N;i++){ ans+= a[i]-> eval(x); }
+   return(ans);
+}
+float combdiffs(float x, int N, asyms** a){  // differential of this combination 
+   float ans=0;
+   for(int i=0;i<N;i++){ ans+= a[i]-> diff(x); }
+   return(ans);
+}
+
+
+/* This is an example (same as the one in the paper). It uses ROOT to draw graphs and such */
+
+/* combines 1.9+.5-.7 with 2.4+.8-.6 and 3.1+.4-.5  */
+
+
+// create the three error objects
+
+float values[]={1.9,2.4,3.1};
+float sigmam[]={.5,.8,.4};
+float sigmap[]={.7,.6,.5};
+asyms* a[3];
+for(int i=0;i<3;i++) a[i]=new asyms(values[i],sigmap[i],sigmam[i]);
+
+// scan across and draw the 3 curves and the combination 
+
+const int N=100;
+float x[N],y0[N],y1[N],y2[N],yy[N];
+for(int i=0;i<N;i++) { x[i]=(5.0*i)/N; y0[i]=a[0]->eval(x[i]);
+   y1[i]=a[1]->eval(x[i]); y2[i]=a[2]->eval(x[i]); yy[i]=combs(x[i],3,a);
+ }
+TGraph gr(100,x,y0); gr->SetMaximum(0.2); gr->SetMinimum(-2); gr.SetLineColor(3);
+ gr->Draw("AC");
+TGraph gr2(100,x,y1; gr2.SetLineColor(2); gr2->Draw("SAME");
+TGraph gr3(100,x,y2); gr3.SetLineColor(4); gr3->Draw("SAME");
+TGraph gr4(N,x,yy); gr4.Draw("SAME");
+TLine lin1(.5,0,4.5,0); lin1.Draw();
+TLine lin2(.5,-.5,4.5,-.5); lin2.Draw();
+
+// find the peak of the combination numerically. First find the total range
+
+float lo=values[0],hi=values[0];
+for(int i=1;i<3;i++){ if(lo>values[i]) lo=values[i];
+                      if(hi<values[i]) hi=values[i]; }
+float lowest=lo, highest=hi;
+float vlo=combdiffs(lo,3,a),vhi=combdiffs(hi,3,a);
+float mid,vmid;
+
+// then do a binary search in up to 20 steps looking for zero differential
+ 
+for(int j=0;j<20;j++) {
+mid=(hi+lo)/2.;
+vmid=combdiffs(mid,3,a);
+if(vmid==0) break;
+if(vmid*vlo>0) { lo=mid;vlo=vmid;} else {hi=mid;vhi=vmid;}
+}
+float peakval=mid;
+cout<<" combined value "<<mid<<" "<<vmid<<endl;
+
+// value found - draw lines on the plot
+
+float ymid=combs(mid,3,a);
+TLine L6(mid-1,ymid,mid+1,ymid);
+L6.Draw();
+TLine L7(mid-1,ymid-.5,mid+1,ymid-.5); 
+L7.Draw();
+TLine L8(mid,ymid-.25,mid,ymid+.25); L8->Draw();
+
+// similar perfomance to find the Delta ln L=-1/2 points
+
+float goal=ymid-0.5;
+lo=lowest;
+hi=peakval;
+vlo=combs(lo,3,a)-goal;
+vhi=combs(hi,3,a)-goal;
+for(int j=0;j<20;j++){
+  mid=(hi+lo)/2;
+  vmid=combs(mid,3,a)-goal;
+  if(vmid==0) break;
+  if(vmid*vlo>0) {lo=mid; vlo=vmid;} else {hi=mid; vhi=vmid;}
+  }
+
+cout<<"lower value "<<mid<<endl;
+TLine L(mid,goal-.2,mid,goal+.2);
+L.Draw();
+
+lo=peakval;
+hi=highest;
+vlo=combs(lo,3,a)-goal;
+vhi=combs(hi,3,a)-goal;
+cout<<lo<<" "<<vlo<<" "<<hi<<" "<<vhi<<endl;
+for(int j=0;j<20;j++){
+  mid=(hi+lo)/2;
+  vmid=combs(mid,3,a)-goal;
+  if(vmid==0) break;
+  if(vmid*vlo>0) {lo=mid; vlo=vmid;} else {hi=mid; vhi=vmid;}
+  }
+
+cout<<"higher value "<<mid<<endl;
+TLine LL(mid,goal-.2,mid,goal+.2);
+LL->Draw();
+
+
+canvas1->Print();
+cout<<"OK - all done"<<endl;
+
