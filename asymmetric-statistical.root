@@ -1,121 +1,236 @@
-/* definition of the class and utility functions for asymmetric errors*/
-/* These are (hopefully) in vanilla C++ */
+/* 
+   definitions of the classes and utility functions for asymmetric errors
+   These are (hopefully) in vanilla C++ 
+   and some example programs, one of which uses ROOT to draw results
+*/
+class asym{ // common to linear-sigma and linear-variance methods. Virtual
+public: 
+  double x0;
+  virtual  double eval( double x)=0;
+  virtual  double diff(double x)=0;
+  virtual double w(double x)=0;
+  virtual ~asym()=default;
+  };
 
-class asyms{
-public: float x0,sigma,sigmap; // sigmap is sigma-prime, the differential
- asyms(float val, float sp, float sm){
-   x0=val;
-   sigma=2 *sp * sm / (sp+sm);
-   sigmap= (sp-sm)/(sp+sm);
-}
-float eval(float x){ return(-0.5*pow((x-x0)/(sigma+sigmap*(x-x0)),2)); }
-float diff(float x){ return(2*sigma*(x-x0)/pow(sigma+sigmap*(x-x0),3)); }
-};
+class asyms:public asym{ // using linear sigma model
+public: 
+   double sigma,sigmap; // sigmap is sigma-prime, the differential
+   asyms(double val, double sp, double sm){  // sp is sigma-plus, sm sigma-minus
+      x0=val;
+      sigma=2 *sp * sm / (sp+sm);
+      sigmap= (sp-sm)/(sp+sm);
+      }
+   double eval(double x){ return(-0.5*pow((x-x0)/(sigma+sigmap*(x-x0)),2)); }
+   double diff(double x){ return(2*sigma*(x-x0)/pow(sigma+sigmap*(x-x0),3)); }
+   double w(double x){return(0.5*pow(sigma+sigmap*x,3)/sigma);} 
+   };
 
-float combs(float x, int N, asyms** a){ // combine assuming linear sigma
-   float ans=0;
+class asymv:public asym { // using linear-variance model
+public: 
+   double V,Vp; 
+   asymv(double val, double sp, double sm){
+     x0=val;
+     V= sp * sm ;
+     Vp= (sp-sm);
+     }
+   double eval(double x){  // Variance can go negative in pathological cases 
+        if (V+Vp*(x-x0)<=0) return  nan("silly");
+        return(-0.5*pow((x-x0),2)/(V+Vp*(x-x0))); 
+        }
+   double diff(double x){ return(-(x-x0)*(2*V+Vp*(x-x0))/pow(V+Vp*(x-x0),2));}
+   double w(double x){return(pow(V+Vp*x,2)/(2*V+Vp*x));} 
+   };
+
+double comb(double x, int N, asym** a){ // combine likelihood from several values 
+   double ans=0;
    for(int i=0;i<N;i++){ ans+= a[i]-> eval(x); }
    return(ans);
-}
-float combdiffs(float x, int N, asyms** a){  // differential of this combination 
-   float ans=0;
+   }
+double combdiff(double x, int N, asym** a){  // differential of this combination 
+   double ans=0;
    for(int i=0;i<N;i++){ ans+= a[i]-> diff(x); }
    return(ans);
+   }
+
+double globalN; // sorry but these globals make things a lot simpler
+int globalnval; 
+asym* a[9];  // holds the asymmetric values. Used a lot
+double x[9]; // used in f4 in example3 so adjustments are small
+
+double f1(double x){return(globalN*log(x)-x);} // for  asymmetric Poisson errors
+double f2(double x){return(combdiff(x,globalnval,a));}
+double f3(double x){return(comb(x,globalnval,a));}
+double f4(double u){
+double w[globalnval];
+ for(int j=0;j<25;j++){
+ double sumw=0;
+ for (int i=0;i<globalnval;i++) {
+      w[i]=a[i]->w(x[i]);
+      sumw+=w[i];
+     }
+ double sumcheck=0;
+ for (int i=0;i<globalnval;i++) {
+     double newx=u*w[i]/sumw;
+     sumcheck+=abs(newx-x[i]);
+     x[i]=newx;
+     } 
+ if(sumcheck*globalnval < 1.E-5) break;
+}
+ double likelihood=0;
+ for(int i=0;i<globalnval;i++) likelihood+=a[i]->eval(x[i]);
+ return(likelihood);
 }
 
+double seek(double(*f)(double), double target, double lo,double hi){  // binary search routine used for peaks and  -.5 errors
+  double mid,vmid;
+  double vlo=f(lo);
+  double vhi=f(hi);
+  if((vlo-target)*(vhi-target) >0){
+     cout<<" seek fn not given chance for a unique solution"<<endl; exit(1);
+     }
+  for(int j=0;j<20;j++) {
+    mid=(hi+lo)/2.;
+    vmid=f(mid);
+    if(vmid==target) break;
+    if((vmid-target)*(vlo-target)>0) {lo=mid;vlo=vmid;} else {hi=mid;vhi=vmid;}
+    }
+  return(mid);
+  }
+ 
+void example1(){// reproduces table 1 in the paper
+   globalnval=2;
+   cout<<" Example 1\n";
+   for(int i=0;i<5;i++){
+       double x1=5+i;
+       double x2=5-i;
+       globalN=x1;
+       double sp1=seek(f1,x1*log(x1)-x1-.5,x1,x1+2*sqrt(x1))-x1;
+       double sm1=x1-seek(f1,x1*log(x1)-x1-.5,x1-sqrt(x1),x1);
+       globalN=x2;
+       double sp2=seek(f1,x2*log(x2)-x2-.5,x2,x2+2*sqrt(x2))-x2;
+       double sm2=x2-seek(f1,x2*log(x2)-x2-.5,x2-sqrt(x2),x2);
+       cout<<" Numbers ";
+       cout<<x1<<" +"<<sp1<<" -"<<sm1<<" and "<<x2<<" +"<<sp2<<" -"<<sm2;
+       a[0]=new asyms(x1,sp1,sm1);
+       a[1]=new asyms(x2,sp2,sm2);
+       double ans=seek(f2,0,x1,x2);
+       cout<<" give  "<<ans;
+       cout<<" -"<<ans-seek(f3,f3(ans)-.5,ans-sqrt(ans),ans);
+       cout<<" +"<<seek(f3,f3(ans)-.5,ans,ans+2*sqrt(ans))-ans;
+       delete a[0];
+       delete a[1];
+       a[0]=new asymv(x1,sp1,sm1);
+       a[1]=new asymv(x2,sp2,sm2);
+       ans=seek(f2,0,x1,x2);
+       cout<<" or "<<ans;
+       cout<<" -"<<ans-seek(f3,f3(ans)-.5,ans-sqrt(ans),ans);
+       cout<<" +"<<seek(f3,f3(ans)-.5,ans,ans+sqrt(ans))-ans;
+       delete a[0];
+       delete a[1];
+       cout<<endl;
+       }
+  }
 
-/* This is an example (same as the one in the paper). It uses ROOT to draw graphs and such */
+void example3(){ // Reproduce Table 2 in the paper
+cout<<" Example 3"<<endl;
+for (int line=0;line<6;line++) {
+int nvals=2;
+double vals[9],sp[9],sm[9],w[9];
+vals[0]=4-line;
+vals[1]=5+line;
+if(line==4) { nvals=3; for(int i=0;i<nvals;i++) vals[i]=3;}
+if(line==5) { nvals=9; for(int i=0;i<nvals;i++) vals[i]=1;}
+globalnval=nvals;
+for (int i=0;i<nvals;i++) { // find errors for the sonstituents
+     globalN=vals[i];
+     sp[i]=seek(f1,vals[i]*log(vals[i])-vals[i]-.5,vals[i],vals[i]+2*sqrt(vals[i]))-vals[i];
+     sm[i]=vals[i]-seek(f1,vals[i]*log(vals[i])-vals[i]-.5,vals[i],vals[i]-sqrt(vals[i]));
+     a[i]=new asymv(0,sp[i],sm[i]);
+     x[i]=0;
+}
+for(int i=0;i<nvals;i++) cout<<vals[i]<<" ";
+double spfinal=seek(f4,-.5,0,5.);
+double smfinal=seek(f4,-.5,-5.,0);
+cout<<" + "<<spfinal<<" "<<smfinal<<endl;
+}
+}
+//----------------------------------------------------------------------
+// Up to here is ctraight C++.  What follows is root specific. 
+
+void drawcurve(int N, double* x, double* y){// draw curve avoiding NaNs
+     static int col=0;
+     col += 1;
+     int ilo=0; while(isnan(float(y[++ilo]))){};
+     int ihi=N-1; while(isnan(float(y[--ihi]))){};
+     TGraph* gr=new TGraph(ihi+1-ilo,&x[ilo],&y[ilo]); 
+     gr->SetLineColor(col);
+     if(col==1){
+       gr->SetMaximum(0.2); 
+       gr->SetMinimum(-2); 
+       gr->Draw("AC");
+     } else {
+       gr->Draw("SAME");
+       }
+}
+
+void example2(){// Reproduces Figure 5 in the paper
 
 /* combines 1.9+.5-.7 with 2.4+.8-.6 and 3.1+.4-.5  */
 
+  double values[]={1.9,2.4,3.1};
+  double sigmam[]={.5,.8,.4};
+  double sigmap[]={.7,.6,.5};
+// to switch between s and V models, use asyms or asymv in the next statement
+//     that's all
+  for(int i=0;i<3;i++) a[i]=new asyms(values[i],sigmap[i],sigmam[i]);
 
-// create the three error objects
-
-float values[]={1.9,2.4,3.1};
-float sigmam[]={.5,.8,.4};
-float sigmap[]={.7,.6,.5};
-asyms* a[3];
-for(int i=0;i<3;i++) a[i]=new asyms(values[i],sigmap[i],sigmam[i]);
+  globalnval=3;  // used in f2 and f3
 
 // scan across and draw the 3 curves and the combination 
 
-const int N=100;
-float x[N],y0[N],y1[N],y2[N],yy[N];
-for(int i=0;i<N;i++) { x[i]=(5.0*i)/N; y0[i]=a[0]->eval(x[i]);
-   y1[i]=a[1]->eval(x[i]); y2[i]=a[2]->eval(x[i]); yy[i]=combs(x[i],3,a);
- }
-TGraph gr(100,x,y0); gr->SetMaximum(0.2); gr->SetMinimum(-2); gr.SetLineColor(3);
- gr->Draw("AC");
-TGraph gr2(100,x,y1; gr2.SetLineColor(2); gr2->Draw("SAME");
-TGraph gr3(100,x,y2); gr3.SetLineColor(4); gr3->Draw("SAME");
-TGraph gr4(N,x,yy); gr4.Draw("SAME");
-TLine lin1(.5,0,4.5,0); lin1.Draw();
-TLine lin2(.5,-.5,4.5,-.5); lin2.Draw();
+  const int N=100;
+  double  x[N],y0[N],y1[N],y2[N],yy[N];
+  for(int i=0;i<N;i++) { 
+    x[i]=(5.0*i)/N; 
+    y0[i]=a[0]->eval(x[i]);
+    y1[i]=a[1]->eval(x[i]); 
+    y2[i]=a[2]->eval(x[i]); 
+    }
+  TCanvas* canvas1=new TCanvas("canvas","Canvas",500,500);
+  drawcurve(N,x,y0);
+  drawcurve(N,x,y1);
+  drawcurve(N,x,y2);
+  TLine lin1(.5,0,4.5,0); lin1.Draw();
+  TLine lin2(.5,-.5,4.5,-.5); lin2.Draw();
 
 // find the peak of the combination numerically. First find the total range
 
-float lo=values[0],hi=values[0];
-for(int i=1;i<3;i++){ if(lo>values[i]) lo=values[i];
+  double lo=values[0],hi=values[0];
+  for(int i=1;i<3;i++){ if(lo>values[i]) lo=values[i];
                       if(hi<values[i]) hi=values[i]; }
-float lowest=lo, highest=hi;
-float vlo=combdiffs(lo,3,a),vhi=combdiffs(hi,3,a);
-float mid,vmid;
 
-// then do a binary search in up to 20 steps looking for zero differential
- 
-for(int j=0;j<20;j++) {
-mid=(hi+lo)/2.;
-vmid=combdiffs(mid,3,a);
-if(vmid==0) break;
-if(vmid*vlo>0) { lo=mid;vlo=vmid;} else {hi=mid;vhi=vmid;}
+  double mid=seek(f2,0,lo,hi);
+  double ymid=f3(mid);
+  double chisquared=-2*ymid;
+// draw combined likelihood - shift base 
+  for(int i=0;i<N;i++)  yy[i]=comb(x[i],3,a)-ymid;
+  drawcurve(N,x,yy);
+//  draw lines on the plot
+  TLine L6(mid-1,0,mid+1,0);
+  L6.Draw();
+  TLine L7(mid-1,-.5,mid+1,-.5); 
+  L7.Draw();
+  TLine L8(mid,-.25,mid,+.25); L8.Draw();
+
+//Now find the Delta ln L=-1/2 points
+
+  double combinedsm=mid-seek(f3,ymid-.5,lo,mid);
+  double combinedsp=seek(f3,ymid-.5,mid,hi)-mid;
+  TLine L(mid-combinedsm,-.7,mid-combinedsm,-.3);
+  L.Draw();
+  TLine LL(mid+combinedsp,-.7,mid+combinedsp,-.3);
+  LL.Draw();
+  canvas1->Print();
+  cout<<"Result is "<<mid<<" + "<<combinedsp<<" - "<<combinedsm<<" chi squared "<<chisquared<<endl;
+  gSystem->Exec("sleep 10");
 }
-float peakval=mid;
-cout<<" combined value "<<mid<<" "<<vmid<<endl;
-
-// value found - draw lines on the plot
-
-float ymid=combs(mid,3,a);
-TLine L6(mid-1,ymid,mid+1,ymid);
-L6.Draw();
-TLine L7(mid-1,ymid-.5,mid+1,ymid-.5); 
-L7.Draw();
-TLine L8(mid,ymid-.25,mid,ymid+.25); L8->Draw();
-
-// similar perfomance to find the Delta ln L=-1/2 points
-
-float goal=ymid-0.5;
-lo=lowest;
-hi=peakval;
-vlo=combs(lo,3,a)-goal;
-vhi=combs(hi,3,a)-goal;
-for(int j=0;j<20;j++){
-  mid=(hi+lo)/2;
-  vmid=combs(mid,3,a)-goal;
-  if(vmid==0) break;
-  if(vmid*vlo>0) {lo=mid; vlo=vmid;} else {hi=mid; vhi=vmid;}
-  }
-
-cout<<"lower value "<<mid<<endl;
-TLine L(mid,goal-.2,mid,goal+.2);
-L.Draw();
-
-lo=peakval;
-hi=highest;
-vlo=combs(lo,3,a)-goal;
-vhi=combs(hi,3,a)-goal;
-cout<<lo<<" "<<vlo<<" "<<hi<<" "<<vhi<<endl;
-for(int j=0;j<20;j++){
-  mid=(hi+lo)/2;
-  vmid=combs(mid,3,a)-goal;
-  if(vmid==0) break;
-  if(vmid*vlo>0) {lo=mid; vlo=vmid;} else {hi=mid; vhi=vmid;}
-  }
-
-cout<<"higher value "<<mid<<endl;
-TLine LL(mid,goal-.2,mid,goal+.2);
-LL->Draw();
-
-
-canvas1->Print();
-cout<<"OK - all done"<<endl;
-
